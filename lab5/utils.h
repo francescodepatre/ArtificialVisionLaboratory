@@ -1,0 +1,171 @@
+// opencv
+#include <opencv2/core/core.hpp>
+#include <opencv2/calib3d.hpp>
+
+#define USE_OPENCVVIZ
+
+#ifdef USE_OPENCVVIZ
+#include <opencv2/viz.hpp>
+#endif
+
+struct CameraParams
+{
+    // size
+    int w, h;
+
+    // intrinsics
+    float ku, kv; // gli alfa e beta nelle slide (assumiamo no skew)
+    float u0, v0; // coordinate centro ottico
+
+    // estrinsics
+    cv::Affine3f RT; // 4x4 matrix
+};
+
+void LoadPoints(const std::string& filename, std::vector< cv::Point3f >& points)
+{
+    std::ifstream file;
+    file.open(filename.c_str());
+    
+    int size;
+    file >> size;
+    
+    cv::Point3f point;
+    while(file >> point.x >> point.y >> point.z)
+    {
+       cv::Point3f point_out;
+
+        //from "VisLab-body-like" to typical "camera-like" reference
+        point_out.z = point.x;
+        point_out.y = -point.z;
+        point_out.x = -point.y;
+        points.push_back(point_out);
+    }
+
+    if(points.size() < 10)
+    {
+      std::cerr << "ERROR: too few points read from " << filename << " file (" << points.size() << ")" << std::endl;
+      exit(EXIT_FAILURE);
+    }
+    
+    std::cout << "Read " << points.size() << " points data from " << filename << " file" << std::endl;
+
+    file.close();
+}
+
+
+
+// date le rotazioni e le traslazioni genera la matrice 4x4 di rototraslazione
+void PoseToAffine(float rx, float ry, float rz, float tx, float ty, float tz, cv::Affine3f& affine)
+{
+    // rotazione pura attorno X, genero vettore e poi converto in matrice di rotazione usanddo cv::Rodirgues()
+    cv::Mat world_RvecX_cam = cv::Mat(1,3,CV_32F);
+    world_RvecX_cam.at<float>(0,0) = rx;
+    world_RvecX_cam.at<float>(0,1) = 0.0;
+    world_RvecX_cam.at<float>(0,2) = 0.0;
+    cv::Mat world_Rx_cam;
+    cv::Rodrigues(world_RvecX_cam, world_Rx_cam); // Converts a rotation matrix to a rotation vector or vice versa. 
+
+/*
+void cv::Rodrigues  (  
+  InputArray   src,
+  OutputArray   dst,
+  OutputArray   jacobian = noArray()  // 3x9 o or 9x3, which is a matrix of partial derivatives of the output array components with respect to the input array components.
+ )   
+*/
+    
+    // rotazione pura attorno Y
+    cv::Mat world_RvecY_cam = cv::Mat(1,3,CV_32F);
+    world_RvecY_cam.at<float>(0,0) = 0.0;
+    world_RvecY_cam.at<float>(0,1) = ry;
+    world_RvecY_cam.at<float>(0,2) = 0.0;
+    cv::Mat world_Ry_cam;
+    cv::Rodrigues(world_RvecY_cam, world_Ry_cam); // Converts a rotation matrix to a rotation vector or vice versa.
+    
+    cv::Mat world_RvecZ_cam = cv::Mat(1,3,CV_32F);
+    world_RvecZ_cam.at<float>(0,0) = 0.0;
+    world_RvecZ_cam.at<float>(0,1) = 0.0;
+    world_RvecZ_cam.at<float>(0,2) = rz;
+    cv::Mat world_Rz_cam;
+    cv::Rodrigues(world_RvecZ_cam, world_Rz_cam); // Converts a rotation matrix to a rotation vector or vice versa.
+    
+    cv::Mat world_R_cam = world_Rx_cam*world_Ry_cam*world_Rz_cam; // Multiplication order is important (it depends on how the rotation is built)
+    
+    cv::Mat world_t_cam = cv::Mat(1,3,CV_32F); // logicamente avrebbe senso 3,1 ma va comunque bene per cv::Affine3f() 
+    world_t_cam.at<float>(0,0) = tx;
+    world_t_cam.at<float>(0,1) = ty;
+    world_t_cam.at<float>(0,2) = tz;
+    
+    affine = cv::Affine3f(world_R_cam, world_t_cam); // constructor, Affine transform. It represents a 4x4 homogeneous transformation matrix [RT]
+    /* [R t]
+       [0 1]
+    */
+}
+
+void LoadCameraParams(const std::string& filename, CameraParams& params)
+{
+    std::ifstream file;
+    file.open(filename.c_str());
+    
+    file >> params.w >> params.h;
+    
+    file >> params.ku >> params.kv;
+    file >> params.u0 >> params.v0;
+    
+    float rx, ry, rz, tx, ty, tz;
+    file >> rx >> ry >> rz;
+    file >> tx >> ty >> tz;
+    
+    PoseToAffine(rx, ry, rz, tx, ty, tz, params.RT);
+}
+
+// serve per visualizzare i punti per VIZ
+void PointsToMat(const std::vector< cv::Point3f >& points, cv::Mat& mat)
+{
+    mat = cv::Mat(1, 3*points.size(), CV_32FC3); //XXX check 3*...
+    for (unsigned int i = 0,j = 0; i < points.size(); ++i, j+=3)
+    {
+        mat.at<float>(j) = points[i].x;
+        mat.at<float>(j+1) = points[i].y;
+        mat.at<float>(j+2) = points[i].z;
+    }
+}
+
+// disegna i punti sull'immagine (assumendo immagine float)
+void DrawPixels(const std::vector< cv::Point2f >& uv_points, cv::Mat& image)
+{
+    for (unsigned int i = 0; i < uv_points.size(); ++i)
+    {
+        float u = uv_points[i].x;
+        float v = uv_points[i].y;
+
+        if (u > 0 && u < image.cols && v > 0 && v < image.rows)
+        {
+            image.at<float>(v,u) = 1.0f;
+        }
+    }
+}
+
+#ifdef USE_OPENCVVIZ
+cv::viz::Viz3d Viz3D(const CameraParams& params) 
+{
+    // for visualization
+    cv::viz::Viz3d win("3D view");
+    win.setWindowSize(cv::Size(800, 600));
+    
+    // camera frame
+    cv::viz::WCameraPosition cpw(0.5);
+    win.showWidget("cam", cpw, params.RT);
+    cv::viz::WCameraPosition cpw_frustum(cv::Vec2f(atan2(params.w/2, params.ku), atan2(params.h/2, params.kv))); // Camera frustum
+    win.showWidget("cam_frustum", cpw_frustum, params.RT);
+    
+    // world frame
+    win.showWidget("Coordinate Widget", cv::viz::WCoordinateSystem());
+     
+    // specify window camera pose
+    cv::Affine3f world_T_win_cam;
+    PoseToAffine(0.05, 0.0, 0, 0, -5, -30, world_T_win_cam);
+    win.setViewerPose(world_T_win_cam);
+        
+    return win;
+}
+#endif

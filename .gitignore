@@ -65,10 +65,16 @@ vcpkg_installed/
 
 # test output & cache
 Testing/
-.cache/
+.cache
 
 #macos hidden files
 .DS_Store
 
 #.vscode folder
 .vscode
+
+#any zip file
+*.zip
+
+#final files for professor
+deploy
