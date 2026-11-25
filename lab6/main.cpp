@@ -14,9 +14,6 @@
 // utils
 #include "utils.h"
 
-// 
-using namespace std;
-using namespace Eigen;
 
 
 int main(int argc, char **argv) {
@@ -75,10 +72,7 @@ int main(int argc, char **argv) {
 
     Eigen::Matrix3f M_plane_inverse = M_plane.inverse();
 
-    const float meters_per_pixel = 0.05f;
-    const float center_x = 0.0f;
-    const float center_z = 0.0f;
-
+    /*
     for (int y = 0; y < ipm_image.rows; ++y) {
         for (int x = 0; x < ipm_image.cols; ++x) {
             // Punto sul piano y = 0, in coordinate omogenee [X, Z, 1]
@@ -89,7 +83,7 @@ int main(int argc, char **argv) {
             );
 
             // Proietta il punto del piano nell'immagine originale
-            Eigen::Vector3f pixel = M_plane * plane_point;
+            Eigen::Vector3f pixel = M_plane_inverse * plane_point;
 
             if (std::abs(pixel(2)) < 1e-6f) {
                 continue;
@@ -98,13 +92,54 @@ int main(int argc, char **argv) {
             int src_x = static_cast<int>(std::round(pixel(0) / pixel(2)));
             int src_y = static_cast<int>(std::round(pixel(1) / pixel(2)));
 
-            if (src_x >= 0 && src_x < input.cols &&
-                src_y >= 0 && src_y < input.rows) {
+            if (src_x >= 0 && src_x < input.cols && src_y >= 0 && src_y < input.rows) {
                 ipm_image.at<cv::Vec3b>(y, x) =
                     input.at<cv::Vec3b>(src_y, src_x);
             }
         }
     }
+    */
+    /*
+    for(int y = 0; y < input.rows; y++){
+        for(int x = 0; x < input.cols; x++){
+            Eigen::Vector3f punto_piano(static_cast<float>(x),static_cast<float>(y),1.0f);
+
+            Eigen::Vector3f punto = M_plane_inverse * punto_piano;
+
+            punto /= punto(2);
+
+            int x_final = static_cast<int>(std::round(punto(0)));
+            int y_final = static_cast<int>(std::round(punto(1)));
+
+            ipm_image.at<cv::Vec3b>(y, x) = input.at<cv::Vec3b>(y_final, x_final);
+        }
+    }
+        */
+
+        const float metri_per_pixel = 0.05f;
+
+for (int y = 0; y < input.rows; ++y) {
+    for (int x = 0; x < input.cols; ++x) {
+        Eigen::Vector3f pixel(static_cast<float>(x),static_cast<float>(y),1.0f);
+
+        Eigen::Vector3f punto = M_plane_inverse * pixel;
+
+        if (std::abs(punto(2)) < 1e-6f) {
+            continue;
+        }
+
+        punto /= punto(2);
+
+        int x_final = static_cast<int>(std::round(punto(0) / metri_per_pixel + ipm_image.cols / 2.0f));
+        int y_final = static_cast<int>(std::round(ipm_image.rows / 2.0f - punto(1) / metri_per_pixel));
+
+        if (x_final >= 0 && x_final < ipm_image.cols &&
+            y_final >= 0 && y_final < ipm_image.rows) {
+            ipm_image.at<cv::Vec3b>(y_final, x_final) =
+                input.at<cv::Vec3b>(y, x);
+        }
+    }
+}
 
     cv::namedWindow("IPM", cv::WINDOW_AUTOSIZE );
     imshow("IPM", ipm_image);
